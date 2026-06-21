@@ -81,6 +81,7 @@ let
       pkgs.perl
       pkgs.elfutils
       pkgs.openssl
+      pkgs.pahole
     ];
   } ''
     # base.src is a .tar.xz tarball (not an unpacked tree), so extract it.
@@ -114,6 +115,15 @@ let
 
     ./scripts/config --disable WERROR
 
+    # sched_ext (CONFIG_SCHED_CLASS_EXT) plus BTF type info, so out-of-tree BPF
+    # schedulers such as concurrency-fuzz-scheduler can be loaded. sched_ext is
+    # mutually exclusive with core scheduling, so turn that off. BTF generation
+    # needs pahole, which is in nativeBuildInputs above and below.
+    ./scripts/config --disable SCHED_CORE
+    ./scripts/config --enable BPF_JIT
+    ./scripts/config --enable DEBUG_INFO_BTF
+    ./scripts/config --enable SCHED_CLASS_EXT
+
     make LLVM=1 ARCH=x86 olddefconfig
     make LLVM=1 ARCH=x86 rustavailable
 
@@ -124,6 +134,11 @@ let
     for opt in BLK_DEV_NVME BTRFS_FS IXGBE TIGON3 SATA_AHCI VFAT_FS EFI; do
       grep -qE "^CONFIG_$opt=(y|m)\$" .config || { echo "ERROR: CONFIG_$opt missing"; grep "CONFIG_$opt" .config || true; exit 1; }
     done
+
+    # Fail the build if sched_ext or BTF did not stick (e.g. an unmet
+    # dependency made olddefconfig drop them).
+    grep -q '^CONFIG_SCHED_CLASS_EXT=y$' .config || { echo "ERROR: CONFIG_SCHED_CLASS_EXT not enabled"; exit 1; }
+    grep -q '^CONFIG_DEBUG_INFO_BTF=y$' .config  || { echo "ERROR: CONFIG_DEBUG_INFO_BTF not enabled"; exit 1; }
 
     cp .config $out
   '';
@@ -146,6 +161,7 @@ hostKernel.overrideAttrs (old: {
     pkgs.python3
     pkgs.elfutils
     pkgs.openssl
+    pkgs.pahole
   ];
 
   # Force BOTH the compiler and the core/alloc source to OUR 1.94.0 toolchain.
